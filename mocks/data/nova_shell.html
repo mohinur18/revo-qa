@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="ru" data-mock="revo-qa">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Mock Nova — revo-qa</title>
+<style>
+  :root {
+    --bg: #f3f4f6;
+    --panel: #ffffff;
+    --text: #111827;
+    --muted: #6b7280;
+    --accent: #2563eb;
+    --border: #e5e7eb;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+         background: var(--bg); color: var(--text); }
+  #nova { min-height: 100vh; display: grid; grid-template-columns: 240px 1fr; }
+  nav[role="navigation"] { background: var(--panel); border-right: 1px solid var(--border); padding: 24px 0; }
+  nav .brand { padding: 0 24px 24px; font-weight: 700; font-size: 18px; color: var(--accent); }
+  nav ul { list-style: none; padding: 0; margin: 0; }
+  nav li a { display: block; padding: 10px 24px; color: var(--text); text-decoration: none; }
+  nav li a:hover, nav li a[aria-current="page"] { background: var(--bg); color: var(--accent); }
+  main { padding: 32px; }
+  h1 { margin-top: 0; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 20px; }
+  .card .label { color: var(--muted); font-size: 13px; }
+  .card .value { font-size: 28px; font-weight: 700; margin-top: 4px; }
+  table { width: 100%; border-collapse: collapse; background: var(--panel); border-radius: 12px; overflow: hidden; border: 1px solid var(--border); }
+  th, td { padding: 12px 16px; text-align: left; border-bottom: 1px solid var(--border); }
+  th { background: var(--bg); font-weight: 600; }
+  tr:last-child td { border-bottom: none; }
+  .badge { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+  .badge-active { background: #dcfce7; color: #166534; }
+  .badge-offline { background: #fef3c7; color: #92400e; }
+  .badge-blocked { background: #fee2e2; color: #991b1b; }
+</style>
+</head>
+<body>
+<div id="nova">
+  <nav role="navigation" aria-label="Главное меню">
+    <div class="brand" data-dusk="brand">avtomato · revo (mock)</div>
+    <ul id="nav-menu"><li><a href="#">Загрузка…</a></li></ul>
+  </nav>
+  <main id="content" data-dusk="resource-index">
+    <h1 id="page-title">Загрузка…</h1>
+    <div id="page-body">
+      <p>Mock Nova shell — данные подгружаются из <code>mocks/data/*.json</code>.</p>
+    </div>
+  </main>
+</div>
+<script>
+(async () => {
+  const $ = (sel) => document.querySelector(sel);
+  const fetchJSON = (url) => fetch(url).then(r => r.ok ? r.json() : null).catch(() => null);
+
+  const path = location.pathname;
+
+  // Always populate menu
+  const menu = await fetchJSON('/nova-api/menu');
+  if (menu && menu.menu) {
+    $('#nav-menu').innerHTML = menu.menu.map(m =>
+      `<li><a href="${m.path}" ${path.startsWith(m.path) ? 'aria-current="page"' : ''}>${m.label}</a></li>`
+    ).join('');
+  }
+
+  if (path.includes('/dashboards/')) {
+    $('#page-title').textContent = 'Дашборд';
+    const dash = await fetchJSON('/nova-api/dashboards/main');
+    if (dash && dash.cards) {
+      $('#page-body').innerHTML =
+        `<div class="cards">${dash.cards.map(c =>
+          `<div class="card" data-dusk="card-${c.id}"><div class="label">${c.label}</div><div class="value">${c.value.toLocaleString('ru-RU')}</div></div>`
+        ).join('')}</div>`;
+    }
+  } else if (path.includes('/resources/devices')) {
+    $('#page-title').textContent = 'Устройства';
+    const data = await fetchJSON('/nova-api/resources/devices');
+    if (data && data.data) {
+      $('#page-body').innerHTML =
+        `<table role="table"><thead><tr><th>Серийный №</th><th>Модель</th><th>Филиал</th><th>Статус</th></tr></thead>
+         <tbody>${data.data.map(d =>
+           `<tr data-id="${d.id}"><td>${d.serial}</td><td>${d.model}</td><td>${d.branch_name}</td>
+            <td><span class="badge badge-${d.status}">${d.status}</span></td></tr>`
+         ).join('')}</tbody></table>`;
+    }
+  } else if (path.includes('/resources/customers')) {
+    $('#page-title').textContent = 'Клиенты';
+    const data = await fetchJSON('/nova-api/resources/customers');
+    if (data && data.data) {
+      $('#page-body').innerHTML =
+        `<table role="table"><thead><tr><th>ФИО</th><th>Телефон</th><th>Скоринг</th><th>Статус</th></tr></thead>
+         <tbody>${data.data.map(c =>
+           `<tr data-id="${c.id}"><td>${c.full_name}</td><td>${c.phone}</td><td>${c.score}</td>
+            <td><span class="badge badge-${c.status}">${c.status}</span></td></tr>`
+         ).join('')}</tbody></table>`;
+    }
+  }
+})();
+</script>
+</body>
+</html>

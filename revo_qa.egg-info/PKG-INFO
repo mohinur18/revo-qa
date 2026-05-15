@@ -1,0 +1,14 @@
+Metadata-Version: 2.4
+Name: revo-qa
+Version: 0.1.0
+Summary: E2E automation suite for revo.avtomato.uz (Playwright + pytest)
+Requires-Python: >=3.11
+Requires-Dist: pytest>=8.3
+Requires-Dist: pytest-playwright>=0.5
+Requires-Dist: pytest-xdist>=3.6
+Requires-Dist: pytest-rerunfailures>=14.0
+Requires-Dist: pytest-html>=4.1
+Requires-Dist: python-dotenv>=1.0
+Requires-Dist: pydantic>=2.7
+Requires-Dist: faker>=25.0
+Requires-Dist: pillow>=10.0

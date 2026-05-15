@@ -1,0 +1,9 @@
+{
+  "menu": [
+    {"key": "dashboard", "label": "Дашборд", "path": "/nova/dashboards/main"},
+    {"key": "customers", "label": "Клиенты", "path": "/nova/resources/customers"},
+    {"key": "installments", "label": "Рассрочки", "path": "/nova/resources/installments"},
+    {"key": "devices", "label": "Устройства", "path": "/nova/resources/devices"},
+    {"key": "payments", "label": "Платежи", "path": "/nova/resources/payments"}
+  ]
+}

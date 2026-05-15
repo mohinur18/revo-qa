@@ -1,0 +1,214 @@
+name: e2e
+
+# Two jobs in this workflow:
+#   1. gating         — PR-blocking. Smoke + functional + login robustness + mocked flows.
+#                       Failures fail the build. No security/perf/visual.
+#   2. observability  — Non-gating. Security headers, perf budgets, visual regression.
+#                       Runs on push to main + nightly. continue-on-error: true so failures
+#                       are surfaced in artifacts/summary but never block merges.
+#
+# Both jobs require ZERO secrets — MOCK_BACKEND=1 stubs all backend dependencies.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+  schedule:
+    - cron: "0 4 * * *"  # nightly 04:00 UTC
+
+env:
+  REVO_BASE_URL: https://revo.avtomato.uz
+  MOCK_BACKEND: "1"
+  HEADLESS: "true"
+  PERF_TTFB_MS: "2000"
+  PERF_DCL_MS: "4000"
+  PERF_LOAD_MS: "8000"
+  VISUAL_THRESHOLD_PCT: "0.5"
+  PYTHONIOENCODING: utf-8
+
+jobs:
+  # -----------------------------------------------------------------------
+  # GATING — PR critical. Must pass for merge.
+  # -----------------------------------------------------------------------
+  gating:
+    name: Gating (smoke + functional)
+    if: github.event_name == 'pull_request' || github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+
+      - name: Install Playwright browsers
+        run: python -m playwright install --with-deps chromium
+
+      - name: Run gating suite
+        run: |
+          python -m pytest \
+            tests/auth/test_login.py \
+            tests/auth/test_login_robustness.py \
+            tests/dashboard \
+            tests/devices \
+            tests/customers/test_customers_mocked.py \
+            tests/installments/test_installment_lifecycle.py \
+            tests/payments/test_qr_payment_lifecycle.py \
+            -m "not perf and not visual and not security" \
+            --reruns 1 \
+            -v
+
+      - name: Generate defect report
+        if: always()
+        run: python scripts/defect_report.py
+
+      - name: Upload structured + defect reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reports-gating
+          path: |
+            reports/report.json
+            reports/defect-report.md
+            reports/defect-report.json
+          retention-days: 30
+
+      - name: Upload Playwright artifacts (traces, videos, screenshots)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: artifacts-gating
+          path: |
+            reports/
+            test-results/
+          retention-days: 14
+          if-no-files-found: warn
+
+      - name: Job summary
+        if: always()
+        run: |
+          python scripts/ci_summary.py "Gating" true >> "$GITHUB_STEP_SUMMARY"
+          if [ -f reports/defect-report.md ]; then
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "<details><summary>Defect report</summary>" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            cat reports/defect-report.md >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "</details>" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Notify Telegram (build failure)
+        if: always()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          python scripts/notify_telegram.py \
+            --job gating \
+            --status "${{ job.status }}" \
+            --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+  # -----------------------------------------------------------------------
+  # OBSERVABILITY — non-gating. Surface, don't block.
+  # -----------------------------------------------------------------------
+  observability:
+    name: Observability (security + perf + visual)
+    if: github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    continue-on-error: true     # job-level: workflow stays green even if this job's steps fail
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+
+      - name: Install Playwright browsers
+        run: python -m playwright install --with-deps chromium
+
+      - name: Run observability suite
+        continue-on-error: true   # step-level: failures here don't fail subsequent steps
+        run: |
+          python -m pytest \
+            tests/security \
+            tests/performance \
+            tests/visual \
+            --reruns 0 \
+            -v
+
+      - name: Generate defect report
+        if: always()
+        run: python scripts/defect_report.py
+
+      - name: Upload structured + defect reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reports-observability
+          path: |
+            reports/report.json
+            reports/defect-report.md
+            reports/defect-report.json
+          retention-days: 30
+
+      - name: Upload visual diffs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: visual-diffs
+          path: |
+            reports/visual/
+            tests/visual/__snapshots__/
+            reports/screenshots/
+          retention-days: 14
+          if-no-files-found: ignore
+
+      - name: Upload Playwright artifacts (traces, videos)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: artifacts-observability
+          path: |
+            reports/
+            test-results/
+          retention-days: 14
+          if-no-files-found: warn
+
+      - name: Job summary
+        if: always()
+        run: |
+          python scripts/ci_summary.py "Observability" false >> "$GITHUB_STEP_SUMMARY"
+          if [ -f reports/defect-report.md ]; then
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "<details open><summary><b>Defect report (advisory)</b></summary>" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            cat reports/defect-report.md >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "</details>" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Notify Telegram (high-severity defects)
+        if: always()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          python scripts/notify_telegram.py \
+            --job observability \
+            --status "${{ job.status }}" \
+            --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"

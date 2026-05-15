@@ -1,0 +1,11 @@
+{
+  "id": 1,
+  "name": "QA Mock Admin",
+  "email": "qa-admin@mock.local",
+  "avatar": null,
+  "roles": ["admin"],
+  "permissions": ["*"],
+  "locale": "ru",
+  "branch_id": 1,
+  "branch_name": "Mock Branch — Tashkent"
+}

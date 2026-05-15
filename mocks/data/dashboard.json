@@ -1,0 +1,14 @@
+{
+  "cards": [
+    {"id": "total_customers", "label": "Всего клиентов", "value": 12453, "delta_pct": 4.2},
+    {"id": "active_installments", "label": "Активные рассрочки", "value": 8721, "delta_pct": -1.1},
+    {"id": "overdue", "label": "Просрочка", "value": 312, "delta_pct": 12.4},
+    {"id": "today_revenue", "label": "Выручка сегодня", "value": 47800000, "currency": "UZS"}
+  ],
+  "chart": {
+    "labels": ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"],
+    "series": [
+      {"name": "Платежи", "data": [120, 132, 101, 134, 90, 230, 210]}
+    ]
+  }
+}

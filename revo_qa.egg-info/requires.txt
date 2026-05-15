@@ -1,0 +1,9 @@
+pytest>=8.3
+pytest-playwright>=0.5
+pytest-xdist>=3.6
+pytest-rerunfailures>=14.0
+pytest-html>=4.1
+python-dotenv>=1.0
+pydantic>=2.7
+faker>=25.0
+pillow>=10.0

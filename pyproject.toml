@@ -1,0 +1,58 @@
+[project]
+name = "revo-qa"
+version = "0.1.0"
+description = "E2E automation suite for revo.avtomato.uz (Playwright + pytest)"
+requires-python = ">=3.11"
+dependencies = [
+    "pytest>=8.3",
+    "pytest-playwright>=0.5",
+    "pytest-xdist>=3.6",
+    "pytest-rerunfailures>=14.0",
+    "pytest-html>=4.1",
+    "python-dotenv>=1.0",
+    "pydantic>=2.7",
+    "faker>=25.0",
+    "pillow>=10.0",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+# This project is a test suite, not a library. No packages to install — only deps.
+py-modules = []
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = [
+    "-ra",
+    "--strict-markers",
+    "--tb=short",
+    "--html=reports/report.html",
+    "--self-contained-html",
+    "--junitxml=reports/junit.xml",
+    "--screenshot=only-on-failure",
+    "--video=retain-on-failure",
+    "--tracing=retain-on-failure",
+    "--output=reports/artifacts",
+]
+markers = [
+    "smoke: critical path — must pass on every run",
+    "auth: authentication and session tests",
+    "dashboard: dashboard / overview screens",
+    "installments: installment sales flow",
+    "payments: QR Pay and payment processing",
+    "customers: customer management",
+    "scoring: credit scoring engine",
+    "rbac: role-based access control",
+    "security: HTTP headers, cookies, transport security",
+    "visual: visual regression / screenshot diff",
+    "perf: performance budget",
+    "mocked: requires mocked backend (no live credentials)",
+    "slow: long-running tests, excluded from smoke",
+]
+log_cli = true
+log_cli_level = "INFO"
+log_cli_format = "%(asctime)s [%(levelname)8s] %(name)s: %(message)s"
+log_cli_date_format = "%H:%M:%S"

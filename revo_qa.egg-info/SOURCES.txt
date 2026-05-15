@@ -1,0 +1,7 @@
+README.md
+pyproject.toml
+revo_qa.egg-info/PKG-INFO
+revo_qa.egg-info/SOURCES.txt
+revo_qa.egg-info/dependency_links.txt
+revo_qa.egg-info/requires.txt
+revo_qa.egg-info/top_level.txt

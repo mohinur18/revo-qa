@@ -1,0 +1,32 @@
+{
+  "data": [
+    {
+      "id": 1,
+      "serial": "MOCK-DEV-001",
+      "model": "POS Terminal A1",
+      "status": "active",
+      "branch_id": 1,
+      "branch_name": "Mock Branch — Tashkent",
+      "last_seen_at": "2026-05-14T08:30:00Z"
+    },
+    {
+      "id": 2,
+      "serial": "MOCK-DEV-002",
+      "model": "QR Reader B2",
+      "status": "offline",
+      "branch_id": 1,
+      "branch_name": "Mock Branch — Tashkent",
+      "last_seen_at": "2026-05-12T22:15:00Z"
+    },
+    {
+      "id": 3,
+      "serial": "MOCK-DEV-003",
+      "model": "POS Terminal A1",
+      "status": "active",
+      "branch_id": 2,
+      "branch_name": "Mock Branch — Samarkand",
+      "last_seen_at": "2026-05-14T07:55:00Z"
+    }
+  ],
+  "meta": {"total": 3, "per_page": 25, "current_page": 1}
+}
