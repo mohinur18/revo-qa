@@ -1,0 +1,58 @@
+name: update-visual-baselines
+
+# Manual maintenance job. Visual baselines are platform-sensitive (font rendering /
+# anti-aliasing differ between OSes), so they must be captured on the same OS that CI
+# runs on — Ubuntu. Dispatch this whenever baselines drift after an intentional UI
+# change, or to seed Linux baselines when they were first captured elsewhere.
+#
+# It regenerates tests/visual/__snapshots__ with VISUAL_UPDATE=1 and commits the result
+# back to the branch it ran on. Requires no secrets — uses the built-in GITHUB_TOKEN.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  REVO_BASE_URL: https://revo.avtomato.uz
+  MOCK_BACKEND: "1"
+  HEADLESS: "true"
+  PYTHONIOENCODING: utf-8
+  VISUAL_UPDATE: "1"
+
+jobs:
+  update-baselines:
+    name: Regenerate Linux visual baselines
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+
+      - name: Install Playwright browsers
+        run: python -m playwright install --with-deps chromium
+
+      - name: Regenerate visual baselines (Linux render)
+        run: python -m pytest tests/visual -v
+
+      - name: Commit updated baselines
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add tests/visual/__snapshots__
+          if git diff --staged --quiet; then
+            echo "No baseline changes — nothing to commit."
+          else
+            git commit -m "Update visual baselines (Linux/CI render)"
+            git push
+          fi
