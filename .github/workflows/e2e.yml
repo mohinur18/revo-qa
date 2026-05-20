@@ -59,9 +59,9 @@ jobs:
             tests/auth/test_login_robustness.py \
             tests/dashboard \
             tests/devices \
-            tests/customers/test_customers_mocked.py \
-            tests/installments/test_installment_lifecycle.py \
-            tests/payments/test_qr_payment_lifecycle.py \
+            tests/customers \
+            tests/installments \
+            tests/payments \
             -m "not perf and not visual and not security" \
             --reruns 1 \
             -v

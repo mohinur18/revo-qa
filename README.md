@@ -52,8 +52,8 @@ revo-qa/
 │   ├── security/                  # HTTP header / cookie audit
 │   ├── dashboard/                 # mocked
 │   ├── devices/                   # mocked
-│   ├── customers/                 # mocked + legacy skeleton
-│   ├── installments/ payments/    # skeletons (need real backend)
+│   ├── customers/                 # mocked list + create/search/edit/scoring UI flows
+│   ├── installments/ payments/    # create/pay/cancel + QR-pay UI flows + API lifecycle
 │   ├── visual/                    # screenshot diff
 │   │   └── __snapshots__/         # baselines (committed)
 │   └── performance/               # perf budgets
@@ -252,7 +252,7 @@ uv run python scripts/defect_report.py
 
 ## Known limitations
 
-- `tests/installments/` and `tests/payments/` flow tests are skeletons. To activate: record real Nova API responses for installment/payment flows into `mocks/data/`, or wire real backend creds and disable the HTML shell interception.
+- The customer / installment / QR-payment UI flows run against the mock Nova shell (`mocks/data/nova_shell.html`) wired to the stateful mock stores in `mocks/state.py`. They exercise the full create→render→mutate pipeline (forms, schedule generation, payment, cancel, scoring decision, PSP callback) but against the mock UI, not the real Nova frontend. To run them against production, record a real Nova shell + endpoints, or wire real creds and disable the HTML interception.
 - Cyrillic test outputs on Windows console need `PYTHONIOENCODING=utf-8` set (see `scripts/probe_login.py`).
 - The `legacy auth tests` under `tests/auth/test_login.py::test_valid_admin_login` etc. are `xfail` until real creds are configured.
 

@@ -10,12 +10,15 @@ the schedule total exactly equal to principal).
 """
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from decimal import ROUND_HALF_UP, Decimal
+from pathlib import Path
 from typing import Any
 
 CENT = Decimal("0.01")
+DATA_DIR = Path(__file__).parent / "data"
 
 # Terminal states for a QR payment. Once a payment lands in any of these,
 # it MUST NOT transition further (fintech invariant).
@@ -29,6 +32,14 @@ class InstallmentError(ValueError):
 
 class QrPaymentError(ValueError):
     """Domain errors from the QR payment store. Routes translate these to HTTP 400/404/409."""
+
+    def __init__(self, message: str, http_status: int = 400) -> None:
+        super().__init__(message)
+        self.http_status = http_status
+
+
+class CustomerError(ValueError):
+    """Domain errors from the customer store. Routes translate these to HTTP 400/404."""
 
     def __init__(self, message: str, http_status: int = 400) -> None:
         super().__init__(message)
@@ -142,6 +153,15 @@ class InstallmentStore:
             rec["balance"] = 0.0
             rec["status"] = "completed"
 
+        return rec
+
+    def cancel(self, iid: int) -> dict[str, Any]:
+        rec = self._installments.get(iid)
+        if rec is None:
+            raise InstallmentError(f"installment {iid} not found")
+        if rec["status"] == "completed":
+            raise InstallmentError(f"installment {iid} is completed, cannot cancel")
+        rec["status"] = "cancelled"
         return rec
 
 
@@ -279,5 +299,114 @@ class QrPaymentStore:
                     f"side-effect failed; payment marked failed: {e}", http_status=409
                 ) from e
 
+        return rec
+
+
+# Deterministic scoring decisions keyed on a named scenario. The real engine would
+# read credit-bureau + internal history; for QA we pin known scenarios to known outcomes
+# so the scoring screen is testable without live data.
+SCORING_SCENARIOS: dict[str, dict[str, Any]] = {
+    "clean-history": {
+        "decision": "approved",
+        "score": 85,
+        "band": "green",
+        "reason": "No overdue history; passport on file; sufficient scoring",
+    },
+    "missing-passport": {
+        "decision": "incomplete",
+        "score": 0,
+        "band": "red",
+        "reason": "Passport data missing — application cannot be scored",
+    },
+    "active-overdue": {
+        "decision": "rejected",
+        "score": 30,
+        "band": "red",
+        "reason": "Customer has an active overdue installment",
+    },
+}
+
+
+def score_scenario(scenario: str) -> dict[str, Any]:
+    """Map a named scoring scenario to its deterministic decision."""
+    if scenario not in SCORING_SCENARIOS:
+        raise CustomerError(f"unknown scoring scenario: {scenario!r}")
+    return {"scenario": scenario, **SCORING_SCENARIOS[scenario]}
+
+
+def _load_customer_seed() -> list[dict[str, Any]]:
+    """Single source of truth for seeded customers: mocks/data/customers.json."""
+    raw = json.loads((DATA_DIR / "customers.json").read_text(encoding="utf-8"))
+    return list(raw.get("data", []))
+
+
+@dataclass
+class CustomerStore:
+    """
+    Stateful customer ledger. Seeded with the same three records the static fixture used,
+    so list/visual tests keep their data, while create/search/edit exercise real mutations.
+
+    A created customer starts `active` with a neutral score; tests assert on the round-trip
+    (create → appears in list, edit → persists across re-fetch) rather than on a scoring model.
+    """
+
+    _customers: dict[int, dict[str, Any]] = None  # type: ignore[assignment]
+    _next_id: int = 104
+
+    def __post_init__(self) -> None:
+        if self._customers is None:
+            self._customers = {c["id"]: dict(c) for c in _load_customer_seed()}
+            self._next_id = max(self._customers, default=100) + 1
+
+    # ---- queries -------------------------------------------------------
+
+    def list_all(self, phone: str | None = None) -> list[dict[str, Any]]:
+        rows = sorted(self._customers.values(), key=lambda r: r["id"])
+        if phone:
+            needle = phone.strip()
+            rows = [r for r in rows if needle in r["phone"]]
+        return rows
+
+    def get(self, cid: int) -> dict[str, Any] | None:
+        return self._customers.get(cid)
+
+    # ---- commands ------------------------------------------------------
+
+    def create(self, *, full_name: str, phone: str, passport: str) -> dict[str, Any]:
+        full_name = (full_name or "").strip()
+        phone = (phone or "").strip()
+        passport = (passport or "").strip()
+        if not full_name:
+            raise CustomerError("full_name is required")
+        if not phone:
+            raise CustomerError("phone is required")
+        if not passport:
+            raise CustomerError("passport is required")
+        if any(c["phone"] == phone for c in self._customers.values()):
+            raise CustomerError(f"phone {phone} already exists", http_status=409)
+
+        cid = self._next_id
+        self._next_id += 1
+        rec = {
+            "id": cid,
+            "full_name": full_name,
+            "phone": phone,
+            "passport": passport,
+            "score": 70,
+            "status": "active",
+            "active_installments": 0,
+            "created_at": "2026-05-14T00:00:00Z",
+        }
+        self._customers[cid] = rec
+        return rec
+
+    def update(self, cid: int, **fields: Any) -> dict[str, Any]:
+        rec = self._customers.get(cid)
+        if rec is None:
+            raise CustomerError(f"customer {cid} not found", http_status=404)
+        for key in ("full_name", "phone", "passport", "status"):
+            if key in fields and fields[key] is not None:
+                value = fields[key]
+                rec[key] = value.strip() if isinstance(value, str) else value
         return rec
 

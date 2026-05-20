@@ -33,9 +33,23 @@
   th { background: var(--bg); font-weight: 600; }
   tr:last-child td { border-bottom: none; }
   .badge { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; }
-  .badge-active { background: #dcfce7; color: #166534; }
-  .badge-offline { background: #fef3c7; color: #92400e; }
-  .badge-blocked { background: #fee2e2; color: #991b1b; }
+  .badge-active, .badge-approved, .badge-paid, .badge-completed, .badge-success { background: #dcfce7; color: #166534; }
+  .badge-offline, .badge-incomplete, .badge-pending { background: #fef3c7; color: #92400e; }
+  .badge-blocked, .badge-rejected, .badge-overdue, .badge-failed, .badge-cancelled { background: #fee2e2; color: #991b1b; }
+  form.revo-form { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 20px; max-width: 480px; margin-bottom: 20px; }
+  form.revo-form label { display: block; font-size: 13px; color: var(--muted); margin: 12px 0 4px; }
+  form.revo-form input { width: 100%; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; font-size: 14px; }
+  button, .btn { background: var(--accent); color: #fff; border: none; border-radius: 8px; padding: 8px 14px; font-size: 14px; cursor: pointer; margin-top: 12px; }
+  button:disabled { background: #9ca3af; cursor: not-allowed; }
+  .toolbar { display: flex; gap: 12px; align-items: center; margin-bottom: 16px; }
+  .toolbar input[type="search"] { padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; min-width: 260px; }
+  .alert { padding: 10px 14px; border-radius: 8px; margin: 12px 0; font-size: 14px; }
+  .alert-success { background: #dcfce7; color: #166534; }
+  .alert-error { background: #fee2e2; color: #991b1b; }
+  [hidden] { display: none !important; }
+  .pay-cell { display: flex; gap: 6px; align-items: center; }
+  .pay-cell input { width: 120px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; }
+  .pay-cell button { margin-top: 0; padding: 6px 10px; }
 </style>
 </head>
 <body>
@@ -53,50 +67,392 @@
 </div>
 <script>
 (async () => {
-  const $ = (sel) => document.querySelector(sel);
-  const fetchJSON = (url) => fetch(url).then(r => r.ok ? r.json() : null).catch(() => null);
+  const $ = (sel, root = document) => root.querySelector(sel);
+  const el = (tag, attrs = {}, html) => {
+    const n = document.createElement(tag);
+    for (const [k, v] of Object.entries(attrs)) {
+      if (k === "dataset") { for (const [dk, dv] of Object.entries(v)) n.dataset[dk] = dv; }
+      else if (v !== null && v !== undefined) n.setAttribute(k, v);
+    }
+    if (html !== undefined) n.innerHTML = html;
+    return n;
+  };
+  const fetchJSON = (url, opts) =>
+    fetch(url, opts).then(async r => ({ status: r.status, body: await r.json().catch(() => ({})) }))
+                    .catch(() => ({ status: 0, body: {} }));
+  const postJSON = (url, body) =>
+    fetchJSON(url, { method: "POST", headers: { "Content-Type": "application/json", "Accept": "application/json" }, body: JSON.stringify(body) });
+  const patchJSON = (url, body) =>
+    fetchJSON(url, { method: "PATCH", headers: { "Content-Type": "application/json", "Accept": "application/json" }, body: JSON.stringify(body) });
+  const fmt = (n) => Number(n).toLocaleString("ru-RU");
+  const title = (t) => { $("#page-title").textContent = t; };
+  const body = () => $("#page-body");
 
   const path = location.pathname;
 
-  // Always populate menu
-  const menu = await fetchJSON('/nova-api/menu');
+  // --- nav menu (always) ----------------------------------------------------
+  const menu = (await fetchJSON("/nova-api/menu")).body;
   if (menu && menu.menu) {
-    $('#nav-menu').innerHTML = menu.menu.map(m =>
-      `<li><a href="${m.path}" ${path.startsWith(m.path) ? 'aria-current="page"' : ''}>${m.label}</a></li>`
-    ).join('');
+    $("#nav-menu").innerHTML = menu.menu.map(m =>
+      `<li><a href="${m.path}" ${path.startsWith(m.path) ? 'aria-current="page"' : ""}>${m.label}</a></li>`
+    ).join("");
   }
 
-  if (path.includes('/dashboards/')) {
-    $('#page-title').textContent = 'Дашборд';
-    const dash = await fetchJSON('/nova-api/dashboards/main');
+  // --- routing --------------------------------------------------------------
+  const customerDetail = path.match(/\/resources\/customers\/(\d+)\b/);
+
+  if (path.includes("/dashboards/")) {
+    await renderDashboard();
+  } else if (path.includes("/resources/devices")) {
+    await renderDevices();
+  } else if (path.includes("/resources/customers/new")) {
+    renderCustomerCreate();
+  } else if (customerDetail) {
+    await renderCustomerEdit(Number(customerDetail[1]));
+  } else if (path.includes("/resources/customers")) {
+    await renderCustomerList();
+  } else if (path.includes("/resources/scoring")) {
+    renderScoring();
+  } else if (path.includes("/resources/installments")) {
+    renderInstallments();
+  } else if (path.includes("/resources/payments")) {
+    renderPayments();
+  }
+
+  // ==========================================================================
+  // Dashboard / Devices (read-only)
+  // ==========================================================================
+  async function renderDashboard() {
+    title("Дашборд");
+    const dash = (await fetchJSON("/nova-api/dashboards/main")).body;
     if (dash && dash.cards) {
-      $('#page-body').innerHTML =
+      body().innerHTML =
         `<div class="cards">${dash.cards.map(c =>
-          `<div class="card" data-dusk="card-${c.id}"><div class="label">${c.label}</div><div class="value">${c.value.toLocaleString('ru-RU')}</div></div>`
-        ).join('')}</div>`;
+          `<div class="card" data-dusk="card-${c.id}"><div class="label">${c.label}</div><div class="value">${Number(c.value).toLocaleString("ru-RU")}</div></div>`
+        ).join("")}</div>`;
     }
-  } else if (path.includes('/resources/devices')) {
-    $('#page-title').textContent = 'Устройства';
-    const data = await fetchJSON('/nova-api/resources/devices');
+  }
+
+  async function renderDevices() {
+    title("Устройства");
+    const data = (await fetchJSON("/nova-api/resources/devices")).body;
     if (data && data.data) {
-      $('#page-body').innerHTML =
+      body().innerHTML =
         `<table role="table"><thead><tr><th>Серийный №</th><th>Модель</th><th>Филиал</th><th>Статус</th></tr></thead>
          <tbody>${data.data.map(d =>
            `<tr data-id="${d.id}"><td>${d.serial}</td><td>${d.model}</td><td>${d.branch_name}</td>
             <td><span class="badge badge-${d.status}">${d.status}</span></td></tr>`
-         ).join('')}</tbody></table>`;
+         ).join("")}</tbody></table>`;
     }
-  } else if (path.includes('/resources/customers')) {
-    $('#page-title').textContent = 'Клиенты';
-    const data = await fetchJSON('/nova-api/resources/customers');
-    if (data && data.data) {
-      $('#page-body').innerHTML =
-        `<table role="table"><thead><tr><th>ФИО</th><th>Телефон</th><th>Скоринг</th><th>Статус</th></tr></thead>
-         <tbody>${data.data.map(c =>
-           `<tr data-id="${c.id}"><td>${c.full_name}</td><td>${c.phone}</td><td>${c.score}</td>
-            <td><span class="badge badge-${c.status}">${c.status}</span></td></tr>`
-         ).join('')}</tbody></table>`;
+  }
+
+  // ==========================================================================
+  // Customers — list + search
+  // ==========================================================================
+  async function renderCustomerList() {
+    title("Клиенты");
+    body().innerHTML = `
+      <div class="toolbar">
+        <a class="btn" data-testid="new-customer-btn" href="/nova/resources/customers/new">+ Новый клиент</a>
+        <input type="search" data-testid="customer-search" placeholder="Поиск по телефону" aria-label="Поиск" />
+      </div>
+      <table role="table" data-testid="customers-table">
+        <thead><tr><th>ФИО</th><th>Телефон</th><th>Скоринг</th><th>Статус</th></tr></thead>
+        <tbody data-testid="customers-tbody"></tbody>
+      </table>`;
+
+    const tbody = $('[data-testid="customers-tbody"]');
+    const drawRows = (rows) => {
+      tbody.innerHTML = "";
+      for (const c of rows) {
+        const tr = el("tr", { "data-testid": "customer-row", "data-id": c.id, "data-phone": c.phone });
+        tr.innerHTML =
+          `<td>${c.full_name}</td><td>${c.phone}</td><td>${c.score}</td>
+           <td><span class="badge badge-${c.status}">${c.status}</span></td>`;
+        tbody.appendChild(tr);
+      }
+    };
+
+    const load = async (phone) => {
+      const q = phone ? `?phone=${encodeURIComponent(phone)}` : "";
+      const res = (await fetchJSON(`/nova-api/customers${q}`)).body;
+      drawRows(res.data || []);
+    };
+
+    $('[data-testid="customer-search"]').addEventListener("input", (e) => load(e.target.value.trim()));
+    await load("");
+  }
+
+  // ==========================================================================
+  // Customers — create
+  // ==========================================================================
+  function renderCustomerCreate() {
+    title("Новый клиент");
+    body().innerHTML = `
+      <form class="revo-form" data-testid="customer-form">
+        <label>ФИО</label><input data-testid="full_name" name="full_name" />
+        <label>Телефон</label><input data-testid="phone" name="phone" />
+        <label>Паспорт</label><input data-testid="passport" name="passport" />
+        <button type="submit" data-testid="customer-submit">Создать</button>
+      </form>
+      <div class="alert alert-success" role="alert" data-testid="customer-success" hidden></div>
+      <div class="alert alert-error" role="alert" data-testid="customer-error" hidden></div>`;
+
+    $('[data-testid="customer-form"]').addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const ok = $('[data-testid="customer-success"]');
+      const err = $('[data-testid="customer-error"]');
+      ok.hidden = true; err.hidden = true;
+      const res = await postJSON("/nova-api/customers", {
+        full_name: $('[data-testid="full_name"]').value,
+        phone: $('[data-testid="phone"]').value,
+        passport: $('[data-testid="passport"]').value,
+      });
+      if (res.status === 201) {
+        ok.textContent = `Клиент #${res.body.id} создан: ${res.body.full_name}`;
+        ok.hidden = false;
+      } else {
+        err.textContent = res.body.error || "Ошибка создания клиента";
+        err.hidden = false;
+      }
+    });
+  }
+
+  // ==========================================================================
+  // Customers — edit / detail
+  // ==========================================================================
+  async function renderCustomerEdit(cid) {
+    title(`Клиент #${cid}`);
+    const res = (await fetchJSON(`/nova-api/customers/${cid}`));
+    if (res.status !== 200) {
+      body().innerHTML = `<div class="alert alert-error" role="alert" data-testid="customer-error">Клиент не найден</div>`;
+      return;
     }
+    const c = res.body;
+    body().innerHTML = `
+      <form class="revo-form" data-testid="customer-edit-form">
+        <label>ФИО</label><input data-testid="edit-full_name" value="${c.full_name}" />
+        <label>Телефон</label><input data-testid="edit-phone" value="${c.phone}" />
+        <button type="submit" data-testid="customer-edit-submit">Сохранить</button>
+      </form>
+      <div class="alert alert-success" role="alert" data-testid="customer-edit-success" hidden></div>`;
+
+    $('[data-testid="customer-edit-form"]').addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const ok = $('[data-testid="customer-edit-success"]');
+      ok.hidden = true;
+      const res2 = await patchJSON(`/nova-api/customers/${cid}`, {
+        full_name: $('[data-testid="edit-full_name"]').value,
+        phone: $('[data-testid="edit-phone"]').value,
+      });
+      if (res2.status === 200) {
+        ok.textContent = "Изменения сохранены";
+        ok.hidden = false;
+      }
+    });
+  }
+
+  // ==========================================================================
+  // Scoring
+  // ==========================================================================
+  function renderScoring() {
+    title("Скоринг");
+    body().innerHTML = `
+      <form class="revo-form" data-testid="scoring-form">
+        <label>Сценарий</label><input data-testid="scoring-scenario" name="scenario" />
+        <button type="submit" data-testid="scoring-submit">Рассчитать</button>
+      </form>
+      <div class="card" data-testid="scoring-result" hidden>
+        Решение: <span class="badge" data-testid="scoring-decision"></span>
+        <p data-testid="scoring-reason" style="margin:8px 0 0;color:var(--muted)"></p>
+      </div>
+      <div class="alert alert-error" role="alert" data-testid="scoring-error" hidden></div>`;
+
+    $('[data-testid="scoring-form"]').addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const result = $('[data-testid="scoring-result"]');
+      const err = $('[data-testid="scoring-error"]');
+      result.hidden = true; err.hidden = true;
+      const res = await postJSON("/nova-api/scoring", { scenario: $('[data-testid="scoring-scenario"]').value });
+      if (res.status === 200) {
+        const dec = $('[data-testid="scoring-decision"]');
+        dec.textContent = res.body.decision;
+        dec.className = `badge badge-${res.body.decision}`;
+        $('[data-testid="scoring-reason"]').textContent = res.body.reason || "";
+        result.hidden = false;
+      } else {
+        err.textContent = res.body.error || "Ошибка скоринга";
+        err.hidden = false;
+      }
+    });
+  }
+
+  // ==========================================================================
+  // Installments — create + schedule + pay + cancel
+  // ==========================================================================
+  function renderInstallments() {
+    title("Рассрочки");
+    body().innerHTML = `
+      <form class="revo-form" data-testid="installment-form">
+        <label>ID клиента</label><input data-testid="customer_id" name="customer_id" value="101" />
+        <label>Сумма (UZS)</label><input data-testid="principal" name="principal" />
+        <label>Срок (мес.)</label><input data-testid="months" name="months" />
+        <label>Дата начала (необязательно)</label><input data-testid="start_date" name="start_date" placeholder="2026-05-14" />
+        <button type="submit" data-testid="installment-submit">Создать рассрочку</button>
+      </form>
+      <div class="alert alert-error" role="alert" data-testid="installment-error" hidden></div>
+      <section data-testid="installment-detail" hidden>
+        <div class="card" style="margin-bottom:16px">
+          <div>ID: <strong data-testid="installment-id"></strong></div>
+          <div>Баланс: <strong data-testid="installment-balance"></strong></div>
+          <div>Статус: <span class="badge" data-testid="installment-status"></span></div>
+          <button data-testid="cancel-plan">Отменить план</button>
+        </div>
+        <table role="table" data-testid="schedule-table">
+          <thead><tr><th>№</th><th>Дата</th><th>Сумма</th><th>Оплачено</th><th>Статус</th><th>Оплата</th></tr></thead>
+          <tbody data-testid="schedule-tbody"></tbody>
+        </table>
+      </section>`;
+
+    let currentId = null;
+
+    const render = (rec) => {
+      currentId = rec.id;
+      const detail = $('[data-testid="installment-detail"]');
+      detail.hidden = false;
+      $('[data-testid="installment-id"]').textContent = rec.id;
+      const bal = $('[data-testid="installment-balance"]');
+      bal.textContent = fmt(rec.balance);
+      bal.dataset.balance = rec.balance;
+      const st = $('[data-testid="installment-status"]');
+      st.textContent = rec.status;
+      st.className = `badge badge-${rec.status}`;
+
+      const active = rec.status === "active";
+      $('[data-testid="cancel-plan"]').disabled = !active;
+
+      const now = Date.now();
+      const tbody = $('[data-testid="schedule-tbody"]');
+      tbody.innerHTML = "";
+      for (const row of rec.schedule) {
+        const overdue = row.status === "pending" && new Date(row.due_date).getTime() < now;
+        const display = overdue ? "overdue" : row.status;
+        const tr = el("tr", {
+          "data-testid": "schedule-row",
+          dataset: { n: row.n, amount: row.amount, due: row.due_date, status: display, overdue: String(overdue) },
+        });
+        const canPay = active && row.status !== "paid";
+        tr.innerHTML =
+          `<td>${row.n}</td><td>${row.due_date}</td><td>${fmt(row.amount)}</td><td>${fmt(row.paid_amount)}</td>
+           <td><span class="badge badge-${display}" data-testid="row-status-${row.n}">${display}</span></td>
+           <td><div class="pay-cell">
+             <input data-testid="pay-amount-${row.n}" value="${row.amount}" ${canPay ? "" : "disabled"} />
+             <button data-testid="pay-row-${row.n}" ${canPay ? "" : "disabled"}>Оплатить</button>
+           </div></td>`;
+        tbody.appendChild(tr);
+      }
+
+      $('[data-testid="cancel-plan"]').onclick = async () => {
+        const res = await postJSON(`/nova-api/installments/${currentId}/cancel`, {});
+        if (res.status === 200) render(res.body);
+      };
+      for (const row of rec.schedule) {
+        const btn = $(`[data-testid="pay-row-${row.n}"]`);
+        if (!btn) continue;
+        btn.onclick = async () => {
+          const amt = Number($(`[data-testid="pay-amount-${row.n}"]`).value);
+          const res = await postJSON(`/nova-api/installments/${currentId}/payments`, { n: row.n, amount: amt });
+          const err = $('[data-testid="installment-error"]');
+          if (res.status === 200) { err.hidden = true; render(res.body); }
+          else { err.textContent = res.body.error || "Ошибка оплаты"; err.hidden = false; }
+        };
+      }
+    };
+
+    $('[data-testid="installment-form"]').addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const err = $('[data-testid="installment-error"]');
+      err.hidden = true;
+      const payload = {
+        customer_id: Number($('[data-testid="customer_id"]').value),
+        principal: Number($('[data-testid="principal"]').value),
+        months: Number($('[data-testid="months"]').value),
+      };
+      const sd = $('[data-testid="start_date"]').value.trim();
+      if (sd) payload.start_date = sd;
+      const res = await postJSON("/nova-api/installments", payload);
+      if (res.status === 201) render(res.body);
+      else { err.textContent = res.body.error || "Ошибка создания"; err.hidden = false; }
+    });
+  }
+
+  // ==========================================================================
+  // QR Payments — generate + amount validation + callback simulation
+  // ==========================================================================
+  function renderPayments() {
+    title("Платежи");
+    const MAX_QR = 50000000;
+    body().innerHTML = `
+      <form class="revo-form" data-testid="qr-form">
+        <label>ID рассрочки</label><input data-testid="qr-installment_id" name="installment_id" />
+        <label>№ платежа</label><input data-testid="qr-schedule_n" name="schedule_n" value="1" />
+        <label>Сумма (UZS)</label><input data-testid="qr-amount" name="amount" />
+        <button type="submit" data-testid="qr-generate">Сгенерировать QR</button>
+      </form>
+      <div class="alert alert-error" role="alert" data-testid="qr-amount-error" hidden></div>
+      <div class="alert alert-error" role="alert" data-testid="qr-error" hidden></div>
+      <section class="card" data-testid="qr-result" hidden>
+        <div>QR-код: <code data-testid="qr-code"></code></div>
+        <div>Статус: <span class="badge" data-testid="qr-status"></span></div>
+        <button data-testid="qr-sim-success">Симулировать успех</button>
+        <button data-testid="qr-sim-failed">Симулировать ошибку</button>
+      </section>`;
+
+    let currentPid = null;
+    const amountErr = $('[data-testid="qr-amount-error"]');
+    const err = $('[data-testid="qr-error"]');
+    const result = $('[data-testid="qr-result"]');
+
+    const setStatus = (s) => {
+      const st = $('[data-testid="qr-status"]');
+      st.textContent = s;
+      st.className = `badge badge-${s}`;
+    };
+
+    $('[data-testid="qr-form"]').addEventListener("submit", async (e) => {
+      e.preventDefault();
+      amountErr.hidden = true; err.hidden = true;
+      const amount = Number($('[data-testid="qr-amount"]').value);
+      if (!(amount > 0 && amount <= MAX_QR)) {
+        amountErr.textContent = `Сумма должна быть больше 0 и не больше ${fmt(MAX_QR)}`;
+        amountErr.hidden = false;
+        return;
+      }
+      const res = await postJSON("/nova-api/qr-payments", {
+        installment_id: Number($('[data-testid="qr-installment_id"]').value),
+        schedule_n: Number($('[data-testid="qr-schedule_n"]').value),
+        amount,
+      });
+      if (res.status === 201) {
+        currentPid = res.body.id;
+        $('[data-testid="qr-code"]').textContent = res.body.qr_code;
+        setStatus(res.body.status);
+        result.hidden = false;
+      } else {
+        err.textContent = res.body.error || "Ошибка генерации QR";
+        err.hidden = false;
+      }
+    });
+
+    const callback = async (status) => {
+      err.hidden = true;
+      if (currentPid === null) return;
+      const res = await postJSON("/nova-api/payments/callback", { payment_id: currentPid, status });
+      if (res.status === 200) setStatus(res.body.status);
+      else { err.textContent = res.body.error || "Ошибка обратного вызова"; err.hidden = false; }
+    };
+    $('[data-testid="qr-sim-success"]').onclick = () => callback("success");
+    $('[data-testid="qr-sim-failed"]').onclick = () => callback("failed");
   }
 })();
 </script>

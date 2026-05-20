@@ -15,16 +15,21 @@ from __future__ import annotations
 import json
 import logging
 import re
+from datetime import date
 from pathlib import Path
 from typing import Any, Callable
+from urllib.parse import parse_qs, urlparse
 
 from playwright.sync_api import BrowserContext, Request, Route
 
 from mocks.state import (
+    CustomerError,
+    CustomerStore,
     InstallmentError,
     InstallmentStore,
     QrPaymentError,
     QrPaymentStore,
+    score_scenario,
 )
 
 logger = logging.getLogger("revo-qa.mocks")
@@ -112,10 +117,6 @@ def _handle_devices(route: Route) -> None:
     _fulfill(route, _load("devices.json"))
 
 
-def _handle_customers(route: Route) -> None:
-    _fulfill(route, _load("customers.json"))
-
-
 def _handle_catchall_api(route: Route) -> None:
     """Fallback for unmapped /nova/api/* and /api/* — return a benign empty envelope."""
     req: Request = route.request
@@ -160,12 +161,13 @@ ROUTE_TABLE: list[tuple[re.Pattern[str], Callable[[Route], None]]] = [
     (re.compile(r".*/nova-api/dashboards/main(\?.*)?$"), _handle_dashboard),
     (re.compile(r".*/nova-api/devices(\?.*)?$"), _handle_devices),
     (re.compile(r".*/nova-api/resources/devices(\?.*)?$"), _handle_devices),
-    (re.compile(r".*/nova-api/customers(\?.*)?$"), _handle_customers),
-    (re.compile(r".*/nova-api/resources/customers(\?.*)?$"), _handle_customers),
 ]
 
 
-_INSTALLMENT_URL_RE = re.compile(r"/nova-api/installments(?:/(\d+)(?:/payments)?)?(?:\?.*)?$")
+_INSTALLMENT_URL_RE = re.compile(
+    r"/nova-api/installments(?:/(\d+)(?:/(payments|cancel))?)?(?:\?.*)?$"
+)
+_CUSTOMER_URL_RE = re.compile(r"/nova-api/(?:resources/)?customers(?:/(\d+))?(?:\?.*)?$")
 
 
 def _read_json_body(route: Route) -> dict:
@@ -174,6 +176,15 @@ def _read_json_body(route: Route) -> dict:
         return json.loads(body) if body else {}
     except json.JSONDecodeError:
         return {}
+
+
+def _parse_start_date(raw: Any) -> date | None:
+    if not raw:
+        return None
+    try:
+        return date.fromisoformat(str(raw))
+    except ValueError:
+        return None
 
 
 def _handle_installments(route: Route, store: InstallmentStore) -> None:
@@ -186,7 +197,7 @@ def _handle_installments(route: Route, store: InstallmentStore) -> None:
         return
 
     installment_id = int(m.group(1)) if m.group(1) else None
-    is_payment = url.endswith("/payments") or "/payments" in url
+    action = m.group(2)  # 'payments' | 'cancel' | None
 
     try:
         if method == "GET" and installment_id is None:
@@ -208,11 +219,12 @@ def _handle_installments(route: Route, store: InstallmentStore) -> None:
                 customer_id=int(body.get("customer_id", 0)),
                 principal=float(body.get("principal", 0)),
                 months=int(body.get("months", 0)),
+                start=_parse_start_date(body.get("start_date")),
             )
             _fulfill(route, rec, status=201)
             return
 
-        if method == "POST" and is_payment and installment_id is not None:
+        if method == "POST" and action == "payments" and installment_id is not None:
             body = _read_json_body(route)
             rec = store.pay(
                 iid=installment_id,
@@ -221,12 +233,78 @@ def _handle_installments(route: Route, store: InstallmentStore) -> None:
             )
             _fulfill(route, rec)
             return
+
+        if method == "POST" and action == "cancel" and installment_id is not None:
+            rec = store.cancel(installment_id)
+            _fulfill(route, rec)
+            return
     except InstallmentError as e:
         _fulfill(route, {"error": str(e)}, status=400)
         return
 
     # Unrecognized method/path under /nova-api/installments → empty list
     _fulfill(route, {"data": [], "meta": {"total": 0}})
+
+
+def _handle_customers(route: Route, store: CustomerStore) -> None:
+    """Stateful router for /nova-api/customers and /nova-api/resources/customers."""
+    method = route.request.method
+    url = route.request.url
+    m = _CUSTOMER_URL_RE.search(url)
+    if not m:
+        _fulfill(route, {"data": [], "meta": {"total": 0}})
+        return
+
+    cid = int(m.group(1)) if m.group(1) else None
+    query = urlparse(url).query
+    phone = (parse_qs(query).get("phone") or [None])[0]
+
+    try:
+        if method == "GET" and cid is None:
+            data = store.list_all(phone=phone)
+            _fulfill(route, {"data": data, "meta": {"total": len(data)}})
+            return
+
+        if method == "GET" and cid is not None:
+            rec = store.get(cid)
+            if rec is None:
+                _fulfill(route, {"error": "not found"}, status=404)
+                return
+            _fulfill(route, rec)
+            return
+
+        if method == "POST" and cid is None:
+            body = _read_json_body(route)
+            rec = store.create(
+                full_name=body.get("full_name", ""),
+                phone=body.get("phone", ""),
+                passport=body.get("passport", ""),
+            )
+            _fulfill(route, rec, status=201)
+            return
+
+        if method in ("PATCH", "PUT") and cid is not None:
+            body = _read_json_body(route)
+            rec = store.update(cid, **body)
+            _fulfill(route, rec)
+            return
+    except CustomerError as e:
+        _fulfill(route, {"error": str(e)}, status=e.http_status)
+        return
+
+    _fulfill(route, {"data": [], "meta": {"total": 0}})
+
+
+def _handle_scoring(route: Route) -> None:
+    """POST /nova-api/scoring {scenario} → deterministic decision."""
+    if route.request.method != "POST":
+        _fulfill(route, {"error": "method not allowed"}, status=405)
+        return
+    body = _read_json_body(route)
+    try:
+        _fulfill(route, score_scenario(str(body.get("scenario", ""))))
+    except CustomerError as e:
+        _fulfill(route, {"error": str(e)}, status=e.http_status)
 
 
 _QR_PAYMENT_URL_RE = re.compile(r"/nova-api/qr-payments(?:/(\d+))?(?:\?.*)?$")
@@ -299,13 +377,18 @@ def install_mocks(context: BrowserContext) -> None:
     # chain (qr_store.apply_callback → installment_store.pay) is consistent.
     installment_store = InstallmentStore()
     qr_store = QrPaymentStore(installments=installment_store)
+    customer_store = CustomerStore()
 
     # Stateful routes — extend by appending tuples here. The dispatcher iterates this
     # list once per request and short-circuits on first prefix match. No global state.
+    # Order matters: more specific prefixes must precede the prefixes they contain.
     stateful_routes: list[tuple[str, Any]] = [
         ("/nova-api/payments/callback", lambda r: _handle_payment_callback(r, qr_store)),
         ("/nova-api/qr-payments", lambda r: _handle_qr_payments(r, qr_store)),
         ("/nova-api/installments", lambda r: _handle_installments(r, installment_store)),
+        ("/nova-api/scoring", _handle_scoring),
+        ("/nova-api/resources/customers", lambda r: _handle_customers(r, customer_store)),
+        ("/nova-api/customers", lambda r: _handle_customers(r, customer_store)),
     ]
 
     def dispatcher(route: Route) -> None:
