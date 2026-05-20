@@ -1,5 +1,7 @@
 # revo-qa
 
+[![e2e](https://github.com/mohinur18/revo-qa/actions/workflows/e2e.yml/badge.svg)](https://github.com/mohinur18/revo-qa/actions/workflows/e2e.yml)
+
 Production-ready E2E automation suite for **revo.avtomato.uz** (Laravel Nova admin panel of Avtomato).
 **Runs in CI with zero credentials, zero external dependencies.**
 
